@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}Gracias por registrar tu asistencia{% endblock %}
+{% block content %}
+<div class="text-center mt-5">
+    <h1 class="mb-4">Gracias por tu registro</h1>
+    <p class="fs-5">{{ resumen|safe }}</p>
+
+    <a href="{% url 'historial_asistencia' %}" class="btn btn-outline-primary mt-3">Ver historial de registro de asistencia</a>
+    <br><br>
+    <a href="{% url 'inicio' %}" class="btn btn-secondary mt-2">Volver al inicio</a>
+</div>
+{% endblock %}

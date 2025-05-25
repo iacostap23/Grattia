@@ -1,0 +1,55 @@
+/* Grattia - styles.css personalizado */
+
+body {
+    background-color: #F1EBEB;
+    font-family: 'Abhaya Libre', serif;
+    font-weight: 800;
+    color: #A18873;
+}
+
+h1, h2, h3, h4, h5, h6, p, span, a, label, button {
+    color: #A18873 !important;
+}
+
+.navbar {
+    background-color: #A18873 !important;
+}
+
+.navbar-brand {
+    color: white !important;
+    font-weight: bold;
+}
+
+.btn,
+.btn-primary,
+.btn-secondary,
+.btn-outline-primary {
+    background-color: #A18873 !important;
+    border-color: #A18873 !important;
+    color: white !important;
+    font-family: 'Abhaya Libre', serif;
+    font-weight: 800;
+}
+
+.btn-outline-primary {
+    background-color: transparent !important;
+    color: #A18873 !important;
+}
+
+.btn-outline-primary:hover,
+.btn:hover {
+    background-color: #8a6e57 !important;
+    border-color: #8a6e57 !important;
+    color: white !important;
+}
+
+.container, .table {
+    background-color: white;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+.table-striped > tbody > tr:nth-of-type(odd) {
+    background-color: #F5EDED;
+}
