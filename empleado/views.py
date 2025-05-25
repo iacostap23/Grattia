@@ -56,7 +56,7 @@ def login_facial(request):
                     ahora = datetime.now()
                     hoy = ahora.date()
 
-                    # ✅ Verificación especial para ADMINISTRADOR
+                    #  Verificación especial para ADMINISTRADOR
                     if empleado.cargo.lower() == "administrador":
                         request.session['empleado_id'] = empleado.id
                         request.session['tipo_evento'] = 'admin'
@@ -139,7 +139,7 @@ def validar_rostro(request):
                     ahora = datetime.now()
                     hoy = ahora.date()
 
-                    # ✅ Verificación especial para ADMINISTRADOR
+                    #  Verificación especial para ADMINISTRADOR
                     if empleado.cargo.lower() == "administrador":
                         request.session['empleado_id'] = empleado.id
                         request.session['tipo_evento'] = 'admin'
