@@ -9,7 +9,7 @@ from django.views.decorators.csrf import csrf_exempt
 import numpy as np
 import base64
 import pickle
-from .models import Empleado, EventosAsistencia 
+from .models import Empleado, EventosAsistencia
 from datetime import datetime
 from django.views.decorators.http import require_POST
 
@@ -19,6 +19,84 @@ encoding_dir = os.path.join(user_dir, 'encodings')
 
 os.makedirs(user_dir, exist_ok=True)
 os.makedirs(encoding_dir, exist_ok=True)
+
+def home(request):
+    return render(request, 'empleado/home.html')
+
+def validar_empleado(request):
+    if request.method == 'POST':
+        correo = request.POST.get('correo')
+        cedula = request.POST.get('cedula')
+        cargo = request.POST.get('cargo')
+
+        try:
+            empleado = Empleado.objects.get(correo=correo, cedula=cedula, cargo=cargo)
+            request.session['empleado_id'] = empleado.id
+
+            if empleado.rostro_registrado:
+                messages.info(request, "Bienvenido. Vamos a validar tu rostro.")
+                return redirect('login_facial')
+            else:
+                messages.success(request, "Validación exitosa. Ahora registra tu rostro.")
+                return redirect('registro')
+
+        except Empleado.DoesNotExist:
+            messages.error(request, "Los datos no coinciden con ningún empleado de Grattia.")
+            return redirect('home')
+
+def registro(request):
+    if request.method == 'POST':
+        empleado_id = request.session.get('empleado_id')
+        if not empleado_id:
+            messages.error(request, "No hay sesión activa.")
+            return redirect('home')
+
+        empleado = Empleado.objects.get(id=empleado_id)
+
+        if empleado.rostro_registrado:
+            messages.info(request, "Ya tienes un rostro registrado. Vamos a verificarlo.")
+            return redirect('login_facial')
+
+        cam = cv2.VideoCapture(0)
+        ret, frame = cam.read()
+        cam.release()
+
+        if not ret:
+            messages.error(request, "No se pudo acceder a la cámara.")
+            return redirect('registro')
+
+        face_locations = face_recognition.face_locations(frame)
+
+        if face_locations:
+            top, right, bottom, left = face_locations[0]
+            rostro = frame[top:bottom, left:right]
+
+            user_img_path = os.path.join(user_dir, f"{empleado.id}.jpg")
+            cv2.imwrite(user_img_path, rostro)
+
+            face_encoding = face_recognition.face_encodings(frame, [face_locations[0]])[0]
+            encoding_path = os.path.join(encoding_dir, f"{empleado.id}.pkl")
+            with open(encoding_path, 'wb') as f:
+                pickle.dump(face_encoding, f)
+
+            empleado.rostro_registrado = True
+            empleado.save()
+
+            hoy = datetime.now().date()
+            ahora = datetime.now().time()
+
+            EventosAsistencia.objects.create(
+                empleado=empleado,
+                fecha=hoy,
+                hora_entrada=ahora
+            )
+
+            messages.success(request, f'Registro facial exitoso. Tu hora de entrada fue {ahora.strftime("%H:%M:%S")}')
+            return redirect('home')
+        else:
+            messages.error(request, "No se detectó ningún rostro.")
+
+    return render(request, 'empleado/registro.html')
 
 def login_facial(request):
     if request.method == 'POST':
@@ -53,36 +131,24 @@ def login_facial(request):
                     except Empleado.DoesNotExist:
                         continue
 
-                    ahora = datetime.now()
-                    hoy = ahora.date()
+                    hoy = datetime.now().date()
+                    ahora = datetime.now().time()
 
-                    # ✅ Verificación especial para ADMINISTRADOR
-                    if empleado.cargo.lower() == "administrador":
-                        request.session['empleado_id'] = empleado.id
-                        request.session['tipo_evento'] = 'admin'
-                        messages.success(request, f"Bienvenido Administrador: {empleado.nombre}")
-                        return redirect('panel_administrador')
+                    registro, creado = EventosAsistencia.objects.get_or_create(empleado=empleado, fecha=hoy)
 
-                    ultimo_evento = EventosAsistencia.objects.filter(empleado=empleado).order_by('-id').first()
-
-                    if not ultimo_evento or ultimo_evento.tipo == 'salida':
-                        tipo = 'entrada'
+                    if creado or not registro.hora_entrada:
+                        registro.hora_entrada = ahora
+                        mensaje = f"{empleado.nombre}, el registro facial fue exitoso. Tu hora de entrada fue {registro.hora_entrada.strftime('%H:%M:%S')}."
+                    elif not registro.hora_salida:
+                        registro.hora_salida = ahora
+                        mensaje = f"{empleado.nombre}, tu hora de salida fue {registro.hora_salida.strftime('%H:%M:%S')}."
                     else:
-                        tipo = 'salida'
+                        mensaje = f"{empleado.nombre}, ya registraste entrada y salida para hoy."
 
-                    mensaje = f"{empleado.nombre}, tu hora de {tipo} fue registrada a las {ahora.strftime('%H:%M:%S')}."
-
-                    EventosAsistencia.objects.create(
-                        empleado=empleado,
-                        fecha=hoy,
-                        hora=ahora.time(),
-                        tipo=tipo
-                    )
-
+                    registro.save()
                     messages.success(request, mensaje)
                     request.session['empleado_id'] = empleado.id
-                    request.session['tipo_evento'] = tipo
-                    return redirect('gracias')
+                    return redirect('home')
 
         messages.error(request, "Ningún rostro coincide con los registrados.")
         return redirect('login_facial')
@@ -103,6 +169,46 @@ def gen_camera():
 
 def video_feed(request):
     return StreamingHttpResponse(gen_camera(), content_type='multipart/x-mixed-replace; boundary=frame')
+
+@csrf_exempt
+def guardar_rostro(request):
+    if request.method == 'POST':
+        empleado_id = request.session.get('empleado_id')
+        if not empleado_id:
+            return JsonResponse({'success': False, 'message': 'No hay sesión activa'})
+
+        data_url = request.POST.get('image')
+        if not data_url:
+            return JsonResponse({'success': False, 'message': 'No se recibió imagen'})
+
+        header, encoded = data_url.split(',', 1)
+        img_data = base64.b64decode(encoded)
+        np_arr = np.frombuffer(img_data, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        face_locations = face_recognition.face_locations(frame)
+        if not face_locations:
+            return JsonResponse({'success': False, 'message': 'No se detectó ningún rostro'})
+
+        empleado = Empleado.objects.get(id=empleado_id)
+
+        top, right, bottom, left = face_locations[0]
+        rostro = frame[top:bottom, left:right]
+
+        user_img_path = os.path.join(user_dir, f"{empleado.id}.jpg")
+        cv2.imwrite(user_img_path, rostro)
+
+        face_encoding = face_recognition.face_encodings(frame, [face_locations[0]])[0]
+        encoding_path = os.path.join(encoding_dir, f"{empleado.id}.pkl")
+        with open(encoding_path, 'wb') as f:
+            pickle.dump(face_encoding, f)
+
+        empleado.rostro_registrado = True
+        empleado.save()
+
+        return JsonResponse({'success': True, 'message': f'Registro exitoso para {empleado.nombre}'})
+
+    return JsonResponse({'success': False, 'message': 'Método no permitido'})
 
 @csrf_exempt
 def validar_rostro(request):
@@ -130,132 +236,23 @@ def validar_rostro(request):
 
                 result = face_recognition.compare_faces([known_encoding], unknown_encoding, tolerance=0.45)
                 if result[0]:
-                    empleado_id = int(filename.replace('.pkl', ''))
+                    username = filename.replace('.pkl', '')
                     try:
-                        empleado = Empleado.objects.get(id=empleado_id)
-                    except Empleado.DoesNotExist:
-                        continue
-
-                    ahora = datetime.now()
-                    hoy = ahora.date()
-
-                    # ✅ Verificación especial para ADMINISTRADOR
-                    if empleado.cargo.lower() == "administrador":
-                        request.session['empleado_id'] = empleado.id
-                        request.session['tipo_evento'] = 'admin'
-                        return JsonResponse({'success': True, 'message': f"Bienvenido Administrador: {empleado.nombre}", 'redirect': 'panel_administrador'})
-
-                    ultimo_evento = EventosAsistencia.objects.filter(empleado=empleado).order_by('-id').first()
-                    tipo = 'entrada' if not ultimo_evento or ultimo_evento.tipo == 'salida' else 'salida'
-
-                    mensaje = f"{empleado.nombre}, registro exitoso. Tu hora de {tipo} fue {ahora.strftime('%H:%M:%S')}."
-
-                    EventosAsistencia.objects.create(
-                        empleado=empleado,
-                        fecha=hoy,
-                        hora=ahora.time(),
-                        tipo=tipo
-                    )
-
-                    request.session['empleado_id'] = empleado.id
-                    request.session['tipo_evento'] = tipo
-
-                    return JsonResponse({'success': True, 'message': mensaje})
+                        empleado = Empleado.objects.get(id=int(username))
+                        return JsonResponse({'success': True, 'message': f'Bienvenido, {empleado.nombre}'})
+                    except (ValueError, Empleado.DoesNotExist):
+                        correo = username.replace("usuario_", "") + "@grattia.edu.co"
+                        try:
+                            empleado = Empleado.objects.get(correo=correo)
+                            return JsonResponse({'success': True, 'message': f'Bienvenido, {empleado.nombre}'})
+                        except Empleado.DoesNotExist:
+                            return JsonResponse({'success': False, 'message': 'Empleado no encontrado en la base de datos.'})
 
         return JsonResponse({'success': False, 'message': 'No coincide con ningún rostro registrado.'})
 
-def inicio(request):
-    return render(request, 'empleado/inicio.html')
-
-def home(request):
-    return redirect('inicio')
-
-def panel_administrador(request):
-    empleados = Empleado.objects.all().order_by('cargo', 'nombre')
-    registros = EventosAsistencia.objects.all().order_by('empleado__cargo', 'empleado__nombre', '-fecha', '-hora')
-
-    data_por_empleado = {}
-    for empleado in empleados:
-        data_por_empleado[empleado] = registros.filter(empleado=empleado)
-
-    return render(request, 'empleado/panel_administrador.html', {
-        'data_por_empleado': data_por_empleado
-    })
-
-
-def gracias(request):
-    empleado_id = request.session.get('empleado_id')
-    tipo_evento = request.session.get('tipo_evento')
-
-    if empleado_id:
-        empleado = Empleado.objects.get(id=empleado_id)
-        eventos = EventosAsistencia.objects.filter(empleado=empleado).order_by('-id')[:2]
-
-        entrada = None
-        salida = None
-        for evento in eventos:
-            if evento.tipo == 'salida' and not salida:
-                salida = evento
-            elif evento.tipo == 'entrada' and not entrada:
-                entrada = evento
-
-        resumen = ""
-        if tipo_evento == 'entrada':
-            if entrada:
-                resumen = f"¡Bienvenido/a, {empleado.nombre}! Tu entrada fue registrada con éxito."
-            else:
-                resumen = f"{empleado.nombre}, no se encontró un registro de entrada reciente."
-
-        elif tipo_evento == 'salida':
-            if entrada and salida:
-             
-                h_entrada = entrada.hora.hour
-                h_salida = salida.hora.hour
-
-                
-                if salida.fecha > entrada.fecha:
-                    horas_trabajadas = (24 - h_entrada) + h_salida
-                else:
-                    horas_trabajadas = max(h_salida - h_entrada, 0)
-
-               
-                cargo = empleado.cargo.lower()
-                if cargo == "mesero":
-                    tarifa = 13000
-                elif cargo == "logístico":
-                    tarifa = 10000
-                else:
-                    tarifa = 0
-
-                pago_estimado = round(horas_trabajadas * tarifa)
-
-                resumen = (
-                    f"{empleado.nombre}, estos fueron tus últimos registros:<br>"
-                    f"Cargo: {empleado.cargo}<br>"
-                    f"➡ Entrada: {entrada.fecha} a las {entrada.hora.strftime('%I:%M:%S %p')}<br>"
-                    f"⬅ Salida: {salida.fecha} a las {salida.hora.strftime('%I:%M:%S %p')}<br><br>"
-                    f"💰 Valor estimado por el día: <strong>${pago_estimado:,.0f}</strong>"
-                )
-            else:
-                resumen = f"{empleado.nombre}, no se encontraron registros completos de entrada y salida."
-        else:
-            resumen = "Tipo de evento no identificado."
-    else:
-        resumen = "No se encontró información del empleado."
-
-    return render(request, 'empleado/gracias.html', {'resumen': resumen})
-
-
-def historial_asistencia(request):
-    empleado_id = request.session.get('empleado_id')
-    if not empleado_id:
-        return redirect('inicio')
-
-    empleado = Empleado.objects.get(id=empleado_id)
-    registros = EventosAsistencia.objects.filter(empleado=empleado).order_by('-fecha', '-hora')
-
-    return render(request, 'empleado/historial.html', {
-        'empleado': empleado,
-        'registros': registros
-    })
+@require_POST
+def cerrar_sesion(request):
+    request.session.flush()
+    messages.success(request, "Sesión cerrada exitosamente.")
+    return redirect('home')
 
