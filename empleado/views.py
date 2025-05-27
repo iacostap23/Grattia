@@ -191,6 +191,7 @@ def gracias(request):
     if empleado_id:
         empleado = Empleado.objects.get(id=empleado_id)
         eventos = EventosAsistencia.objects.filter(empleado=empleado).order_by('-id')[:2]
+        cargo = empleado.cargo.lower()
 
         entrada = None
         salida = None
@@ -203,7 +204,10 @@ def gracias(request):
         resumen = ""
         if tipo_evento == 'entrada':
             if entrada:
-                resumen = f"¡Bienvenido/a, {empleado.nombre}! Tu entrada fue registrada con éxito."
+                resumen = (
+                    f"¡Bienvenido/a, {empleado.nombre}! Tu entrada fue registrada con éxito.<br>"
+                    f"Cargo: {empleado.cargo}<br>"
+                )
             else:
                 resumen = f"{empleado.nombre}, no se encontró un registro de entrada reciente."
 
@@ -231,7 +235,7 @@ def gracias(request):
                 pago_estimado = round(horas_trabajadas * tarifa)
 
                 resumen = (
-                    f"{empleado.nombre}, estos fueron tus últimos registros:<br>"
+                    f"{empleado.nombre}, el resumen de tu jornada laboral es:<br>"
                     f"Cargo: {empleado.cargo}<br>"
                     f"➡ Entrada: {entrada.fecha} a las {entrada.hora.strftime('%I:%M:%S %p')}<br>"
                     f"⬅ Salida: {salida.fecha} a las {salida.hora.strftime('%I:%M:%S %p')}<br><br>"
