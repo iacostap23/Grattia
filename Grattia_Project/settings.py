@@ -32,7 +32,7 @@ DATABASES = {
 # SECURITY WARNING: don't run with debug turned on in production!
 
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['54.162.159.227']
 
 
 # Application definition
